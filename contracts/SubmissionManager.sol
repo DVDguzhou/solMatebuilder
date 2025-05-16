@@ -18,6 +18,7 @@ contract SubmissionManager is CommunityTypes {
         uint256 submitTime;
         bool isScored;
         uint256 finalScore;
+        Category category;
     }
 
     // 提交记录
@@ -50,7 +51,8 @@ contract SubmissionManager is CommunityTypes {
             contentUrl: _contentUrl,
             submitTime: block.timestamp,
             isScored: false,
-            finalScore: 0
+            finalScore: 0,
+            category: _category
         });
 
         emit SubmissionCreated(_communityId, msg.sender, _contentUrl);
@@ -66,8 +68,8 @@ contract SubmissionManager is CommunityTypes {
         require(submission.submitTime > 0, "Submission not found");
         require(!submission.isScored, "Already scored");
         require(_score <= 100, "Score must be between 0 and 100");
-        require(senateContract.senatorCategories(msg.sender) == 
-                senateContract.senatorCategories(_member), "Not authorized senator");
+        Category submissionCategory = submissions[_communityId][_member].category;
+        require(senateContract.isSenator(msg.sender, submissionCategory), "Not authorized senator");
         require(senatorScores[_communityId][_member][msg.sender] == 0, "Already scored by this senator");
 
         senatorScores[_communityId][_member][msg.sender] = _score;
@@ -86,7 +88,7 @@ contract SubmissionManager is CommunityTypes {
         uint256 _communityId,
         address _member
     ) internal view returns (bool) {
-        Category category = senateContract.senatorCategories(_member);
+        Category category = submissions[_communityId][_member].category;
         uint256 activeSenatorCount = senateContract.getActiveSenatorCount(category);
         return submissionScorers[_communityId][_member].length >= activeSenatorCount;
     }

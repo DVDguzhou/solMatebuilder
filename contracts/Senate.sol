@@ -137,6 +137,39 @@ contract Senate is CommunityTypes {
         senateConfigs[_category].minPassScore = _newScore;
         emit MinPassScoreUpdated(_category, _newScore);
     }
+    
+    // 更新参议员任期时间（仅限活跃参议员）
+    function updateTermDuration(Category _category, uint256 _newDuration) external {
+        require(isSenator(msg.sender, _category), "Not a senator");
+        require(_newDuration > 0, "Invalid duration");
+        
+        senateConfigs[_category].termDuration = _newDuration;
+    }
+    
+    // 更新当选所需票数（仅限活跃参议员）
+    function updateMinVotesToElect(Category _category, uint256 _newMinVotes) external {
+        require(isSenator(msg.sender, _category), "Not a senator");
+        require(_newMinVotes > 0, "Invalid vote count");
+        
+        senateConfigs[_category].minVotesToElect = _newMinVotes;
+    }
+
+    // 添加参议员（仅用于测试）
+    function addSenator(address _senator, Category _category) public {
+        require(_senator != address(0), "Invalid senator address");
+        require(senatorCategories[_senator] == Category.NONE, "Already a senator");
+        
+        senators[_category].push(Senator({
+            addr: _senator,
+            votes: 0,
+            startTime: block.timestamp,
+            endTime: block.timestamp + senateConfigs[_category].termDuration,
+            active: true
+        }));
+        
+        senatorCategories[_senator] = _category;
+        emit SenatorElected(_category, _senator);
+    }
 
     // 检查是否是特定类型的参议员
     function isSenator(address _addr, Category _category) public view returns (bool) {
@@ -151,8 +184,8 @@ contract Senate is CommunityTypes {
         return false;
     }
 
-    // 获取特定类型的活跃参议员数量
-    function getActiveSenatorCount(Category _category) external view returns (uint256) {
+    // 获取活跃参议员数量
+    function getActiveSenatorCount(Category _category) public view returns (uint256) {
         uint256 count = 0;
         Senator[] storage categorySenators = senators[_category];
         for (uint i = 0; i < categorySenators.length; i++) {

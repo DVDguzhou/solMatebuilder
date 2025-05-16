@@ -8,6 +8,7 @@ pragma solidity ^0.8.28;
 contract CommunityTypes {
     // 社区类型枚举
     enum Category {
+        NONE,       // 无类别
         MUSIC,      // 音乐
         ART,        // 艺术
         SPORTS,     // 运动
