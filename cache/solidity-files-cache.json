@@ -467,6 +467,46 @@
       "artifacts": [
         "MockCommunity"
       ]
+    },
+    "/Users/k/Desktop/solMatebuilder/contracts/UserAbility.sol": {
+      "lastModificationDate": 1747415688022,
+      "contentHash": "344a71e09311e9de61496ffbb42245cd",
+      "sourceName": "contracts/UserAbility.sol",
+      "solcConfig": {
+        "version": "0.8.28",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./CommunityTypes.sol",
+        "./community.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.28"
+      ],
+      "artifacts": [
+        "UserAbility"
+      ]
     }
   }
 }
