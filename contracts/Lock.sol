@@ -1,34 +1,62 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-// Uncomment this line to use console.log
-// import "hardhat/console.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./community.sol";
 
 contract Lock {
-    uint public unlockTime;
-    address payable public owner;
+    IERC20 public stakingToken;
+    GoalOrientedCommunity public communityContract;
 
-    event Withdrawal(uint amount, uint when);
-
-    constructor(uint _unlockTime) payable {
-        require(
-            block.timestamp < _unlockTime,
-            "Unlock time should be in the future"
-        );
-
-        unlockTime = _unlockTime;
-        owner = payable(msg.sender);
+    // 用户质押记录
+    struct StakeInfo {
+        uint256 communityId;
+        uint256 amount;
+        uint256 timestamp;
     }
 
-    function withdraw() public {
-        // Uncomment this line, and the import of "hardhat/console.sol", to print a log in your terminal
-        // console.log("Unlock time is %o and block timestamp is %o", unlockTime, block.timestamp);
+    mapping(address => StakeInfo) public stakes;
 
-        require(block.timestamp >= unlockTime, "You can't withdraw yet");
-        require(msg.sender == owner, "You aren't the owner");
+    event TokensStaked(address indexed user, uint256 indexed communityId, uint256 amount);
+    event TokensUnstaked(address indexed user, uint256 indexed communityId, uint256 amount);
 
-        emit Withdrawal(address(this).balance, block.timestamp);
+    constructor(address _tokenAddress, address _communityAddress) {
+        stakingToken = IERC20(_tokenAddress);
+        communityContract = GoalOrientedCommunity(_communityAddress);
+    }
 
-        owner.transfer(address(this).balance);
+    // 质押代币
+    function stake(uint256 _communityId, uint256 _amount) external {
+        require(_amount > 0, "Amount must be greater than 0");
+        require(stakes[msg.sender].amount == 0, "Already staked");
+
+        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Transfer failed");
+
+        stakes[msg.sender] = StakeInfo({
+            communityId: _communityId,
+            amount: _amount,
+            timestamp: block.timestamp
+        });
+
+        emit TokensStaked(msg.sender, _communityId, _amount);
+    }
+
+    // 取回质押的代币
+    function unstake() external {
+        StakeInfo storage stakeInfo = stakes[msg.sender];
+        require(stakeInfo.amount > 0, "No stake found");
+
+        // 检查用户是否完成了社区任务
+        (, bool isApproved) = communityContract.getMemberStatus(stakeInfo.communityId, msg.sender);
+        require(isApproved, "Task not completed");
+
+        uint256 amount = stakeInfo.amount;
+        uint256 communityId = stakeInfo.communityId;
+
+        delete stakes[msg.sender];
+
+        require(stakingToken.transfer(msg.sender, amount), "Transfer failed");
+
+        emit TokensUnstaked(msg.sender, communityId, amount);
     }
 }
