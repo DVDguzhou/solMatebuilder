@@ -47,6 +47,8 @@ contract GoalOrientedCommunity is CommunityTypes {
         bool isReviewer;       // 是否是reviewer
         bool hasVotedForClose; // 是否已经为关闭社区投票
         bool closeVote;        // 关闭社区的投票(同意/反对)
+        uint256 totalReviewerScores; // 所有reviewer的评分总和
+        uint256 reviewerCount;      // 已评分的reviewer数量
     }
 
     // 评分结构体
@@ -65,6 +67,12 @@ contract GoalOrientedCommunity is CommunityTypes {
     mapping(uint256 => mapping(address => Score[])) public memberScores;
     mapping(uint256 => mapping(address => mapping(address => bool))) public hasSenatorScored;
 
+    // 加密相关的映射
+    mapping(uint256 => string) public communityEncryptionKey;  // 社区的加密公钥，用于加密提交内容
+    mapping(uint256 => mapping(address => string)) public encryptedDecryptionKeys;  // 用reviewer/senator的钱包公钥加密后的解密私钥
+    mapping(uint256 => bool) public hasGeneratedKeys;  // 社区是否已经生成了密钥对
+    mapping(uint256 => uint256) public encryptedKeysCount;  // 记录已加密的解密私钥数量
+
     // 事件定义
     event CommunityCreated(uint256 indexed id, address creator, Category category);
     event MemberJoined(uint256 indexed id, address member);
@@ -76,10 +84,52 @@ contract GoalOrientedCommunity is CommunityTypes {
     event ReviewerAdded(uint256 indexed id, address indexed reviewer);
     event CloseVoteSubmitted(uint256 indexed id, address indexed member, bool vote);
     event ReviewerApproval(uint256 indexed id, address indexed reviewer, address indexed member, bool approved);
+    event CommunityKeysGenerated(uint256 indexed communityId, string publicKey);
+    event PrivateKeyEncrypted(uint256 indexed communityId, address indexed accessor, bool isSenator);
 
     constructor(address _senateAddress, address _tokenAddress) {
         senateContract = Senate(_senateAddress);
         communityToken = IERC20(_tokenAddress);
+    }
+
+    // 设置社区的密钥对
+    function setCommunityKeys(uint256 _communityId, string memory _encryptionKey) external {
+        require(!hasGeneratedKeys[_communityId], "Keys already generated");
+        require(reviewers[_communityId].length == 10, "Need 10 reviewers first");
+        require(bytes(_encryptionKey).length > 0, "Invalid encryption key");
+
+        communityEncryptionKey[_communityId] = _encryptionKey;
+        hasGeneratedKeys[_communityId] = true;
+        encryptedKeysCount[_communityId] = 0;
+
+        emit CommunityKeysGenerated(_communityId, _encryptionKey);
+    }
+
+    // 为reviewer或senator设置加密后的私钥
+    function setEncryptedDecryptionKey(uint256 _communityId, address _accessor, string memory _encryptedKey, bool _isSenator) external {
+        require(hasGeneratedKeys[_communityId], "Keys not generated yet");
+        require(bytes(_encryptedKey).length > 0, "Invalid encrypted key");
+        
+        if (_isSenator) {
+            require(senateContract.isSenator(_accessor, communities[_communityId].category),
+                    "Not a valid senator");
+        } else {
+            bool isReviewer = false;
+            for (uint i = 0; i < reviewers[_communityId].length; i++) {
+                if (reviewers[_communityId][i] == _accessor) {
+                    isReviewer = true;
+                    break;
+                }
+            }
+            require(isReviewer, "Not a valid reviewer");
+        }
+
+        require(bytes(encryptedDecryptionKeys[_communityId][_accessor]).length == 0, "Key already set");
+
+        encryptedDecryptionKeys[_communityId][_accessor] = _encryptedKey;
+        encryptedKeysCount[_communityId]++;
+
+        emit PrivateKeyEncrypted(_communityId, _accessor, _isSenator);
     }
 
     // 创建新社区
@@ -146,7 +196,9 @@ contract GoalOrientedCommunity is CommunityTypes {
             isScored: false,
             isReviewer: false,
             hasVotedForClose: false,
-            closeVote: false
+            closeVote: false,
+            totalReviewerScores: 0,
+            reviewerCount: 0
         });
 
         memberAddresses[_communityId].push(msg.sender);
@@ -175,14 +227,19 @@ contract GoalOrientedCommunity is CommunityTypes {
         require(member.joinTime > 0, "Not a member");
         require(!member.isScored, "Already submitted");
         require(bytes(_submissionUrl).length > 0, "Empty submission URL");
+        require(hasGeneratedKeys[_communityId], "Community keys not generated");
 
         member.submissionUrl = _submissionUrl;
         emit SubmissionUploaded(_communityId, msg.sender, _submissionUrl);
     }
 
-    // 参议员提交评分
-    // reviewer对提交进行评审
-    function reviewerApprove(uint256 _communityId, address _member, bool _approved) external {
+    // reviewer对提交进行评分
+    function reviewerScore(
+        uint256 _communityId,
+        address _member,
+        uint256 _score,
+        string memory _comment
+    ) external {
         Community storage community = communities[_communityId];
         Member storage reviewer = members[_communityId][msg.sender];
         Member storage member = members[_communityId][_member];
@@ -191,12 +248,18 @@ contract GoalOrientedCommunity is CommunityTypes {
         require(reviewer.isReviewer, "Not a reviewer");
         require(bytes(member.submissionUrl).length > 0, "No submission found");
         require(!member.isScored, "Already reviewed");
+        require(_score <= 100, "Score must be between 0 and 100");
+        require(!hasReviewerVoted[_communityId][_member][msg.sender], "Already voted");
 
-        // 记录reviewer的评审结果
-        reviewerApprovals[_communityId][_member][msg.sender] = _approved;
+        // 记录reviewer的评分
+        reviewerApprovals[_communityId][_member][msg.sender] = _score >= community.passingScore;
         hasReviewerVoted[_communityId][_member][msg.sender] = true;
 
-        emit ReviewerApproval(_communityId, msg.sender, _member, _approved);
+        // 更新总分和评分人数
+        member.totalReviewerScores += _score;
+        member.reviewerCount++;
+
+        emit ReviewerApproval(_communityId, msg.sender, _member, _score >= community.passingScore);
 
         // 检查是否达到足够的reviewer投票
         uint256 totalVotes = 0;
@@ -211,15 +274,13 @@ contract GoalOrientedCommunity is CommunityTypes {
             }
         }
 
-        // 如果超过一半的reviewer同意
+        // 如果超过一半的reviewer已投票
         if (totalVotes >= reviewers[_communityId].length / 2) {
             member.isScored = true;
-            if (approveVotes > totalVotes / 2) {
-                member.isApproved = true;
-                member.finalScore = 100; // 通过即满分
-            } else {
-                member.finalScore = 0; // 不通过即0分
-            }
+            // 计算平均分
+            member.finalScore = member.totalReviewerScores / member.reviewerCount;
+            // 如果平均分达到通过线，则批准
+            member.isApproved = member.finalScore >= community.passingScore;
         }
     }
 
@@ -238,6 +299,7 @@ contract GoalOrientedCommunity is CommunityTypes {
         Member storage member = members[_communityId][_member];
         require(member.isScored, "Not reviewed by reviewers yet");
 
+        // 记录参议员的评分
         memberScores[_communityId][_member].push(Score({
             senator: msg.sender,
             score: _score,
@@ -246,6 +308,33 @@ contract GoalOrientedCommunity is CommunityTypes {
 
         hasSenatorScored[_communityId][_member][msg.sender] = true;
         emit ScoreSubmitted(_communityId, _member, msg.sender, _score);
+
+        // 检查是否达到足够的参议员投票
+        Score[] storage scores = memberScores[_communityId][_member];
+        uint256 totalVotes = scores.length;
+        uint256 approveVotes = 0;
+        uint256 totalScore = 0;
+
+        // 计算同意票数和总分
+        for (uint i = 0; i < scores.length; i++) {
+            totalScore += scores[i].score;
+            if (scores[i].score >= communities[_communityId].passingScore) {
+                approveVotes++;
+            }
+        }
+
+        // 如果参议员数量达到要求（至少3个）且超过半数同意
+        if (totalVotes >= 3 && approveVotes > totalVotes / 2) {
+            // 计算参议员评分的平均分
+            uint256 senateAvgScore = totalScore / totalVotes;
+            // 更新最终分数为参议员评分的平均分
+            member.finalScore = senateAvgScore;
+            member.isApproved = true;
+        } else if (totalVotes >= 3) {
+            // 如果参议员数量达到要求但未获得半数以上同意
+            member.finalScore = 0;
+            member.isApproved = false;
+        }
     }
 
     // 检查参议员的抽查评分
